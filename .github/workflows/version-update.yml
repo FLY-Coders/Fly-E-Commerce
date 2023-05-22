@@ -1,0 +1,59 @@
+name: Update version 
+on: 
+  # workflow dispatch actions are triggered manually from the 'Actions' tab
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: 'Type of update (major / minor / patch)'
+        required: true
+        default: 'patch'
+jobs:
+  version-tag-update:
+    runs-on:
+      - self-hosted
+      - linux-1
+    
+    steps:  
+    # grab / clone the default branch
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+    # setup Node environment
+      - name: Use Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: '14.x'
+          
+    # remove stale tags on the runner      
+      - name: Delete pre-existing tags on runner
+        run : git tag | xargs git tag -d
+        
+    # grab the default branch name (main / production / master etc)
+      - name: Extract branch name
+        id: extract_branch
+        shell: bash
+        run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+          
+    # update version and create a git tag
+      - name: Update version (npm and git tag)
+        run: npm version ${{ github.event.inputs.version-type }} --git-tag-version true
+    
+    # create a new branch and push the version bump (and corresponding tag)
+      - name: Push new version to temp branch
+        run: git push -f origin HEAD:temp_GHA_branch --tags 
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+    # using GH's REST api, make a PR from the temp branch into the default branch
+      - name: Make PR
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/:repository/pulls
+          repository: ${{ github.repository }}
+          head: temp_GHA_branch
+          base: ${{ steps.extract_branch.outputs.branch }}
+          title: "version update PR"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
